@@ -1,0 +1,113 @@
+name: IR_Multi_Proxy_Shahan_Style_2026
+on:
+  workflow_dispatch: # اجرای دستی
+
+jobs:
+  deploy_xray:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # اجرا تا 6 ساعت
+    
+    steps:
+      - name: Install Xray Core
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq uuid-runtime
+          # نصب آخرین نسخه هسته Xray
+          bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+
+      - name: Generate Configs & UUID
+        id: vars
+        run: |
+          # تولید UUID اختصاصی و پسورد تروجان
+          MY_UUID=$(uuidgen)
+          MY_PASS="shahan_pass"
+          echo "uuid=$MY_UUID" >> $GITHUB_OUTPUT
+          echo "pass=$MY_PASS" >> $GITHUB_OUTPUT
+          
+          # ایجاد فایل کانفیگ Xray (VLESS, VMess, Trojan روی پورت 8080)
+          cat <<EOF > /usr/local/etc/xray/config.json
+          {
+            "inbounds": [
+              {
+                "port": 8080,
+                "protocol": "vless",
+                "settings": {
+                  "clients": [{"id": "$MY_UUID"}],
+                  "decryption": "none",
+                  "fallback": {"dest": 8081}
+                },
+                "streamSettings": {"network": "tcp"}
+              },
+              {
+                "port": 8081,
+                "listen": "127.0.0.1",
+                "protocol": "vmess",
+                "settings": {"clients": [{"id": "$MY_UUID"}]}
+              },
+              {
+                "port": 8082,
+                "listen": "127.0.0.1",
+                "protocol": "trojan",
+                "settings": {"clients": [{"password": "$MY_PASS"}]}
+              }
+            ],
+            "outbounds": [{"protocol": "freedom"}]
+          }
+          EOF
+          
+          # اجرای Xray در پس‌زمینه
+          sudo systemctl restart xray
+
+      - name: Install & Start Ngrok
+        id: tunnel
+        run: |
+          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt update && sudo apt install ngrok
+          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          
+          # اجرای تونل روی پورت 8080 (VLESS/Multi)
+          ngrok tcp 8080 --log=stdout > ngrok.log &
+          sleep 10
+          
+          # استخراج آدرس تونل
+          TUNNEL_ADDR=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' | sed 's/tcp:\/\///')
+          echo "addr=$TUNNEL_ADDR" >> $GITHUB_OUTPUT
+
+      - name: Display All Configs
+        run: |
+          ADDR="${{ steps.tunnel.outputs.addr }}"
+          UUID="${{ steps.vars.outputs.uuid }}"
+          PASS="${{ steps.vars.outputs.pass }}"
+          
+          HOST=$(echo $ADDR | cut -d':' -f1)
+          PORT=$(echo $ADDR | cut -d':' -f2)
+          
+          echo "=========================================================="
+          echo "🚀 ALL-IN-ONE CONFIGS READY (SHAHAN STYLE)"
+          echo "=========================================================="
+          echo ""
+          echo "1️⃣ VLESS CONFIG (TCP):"
+          echo "vless://$UUID@$HOST:$PORT?encryption=none&security=none&type=tcp#Shahan_VLESS"
+          echo ""
+          echo "2️⃣ TROJAN CONFIG (TCP):"
+          echo "trojan://$PASS@$HOST:$PORT?security=none&type=tcp#Shahan_Trojan"
+          echo ""
+          echo "3️⃣ VMESS CONFIG (TCP):"
+          VMESS_JSON=$(cat <<EOF
+          {
+            "v": "2", "ps": "Shahan_VMess", "add": "$HOST", "port": "$PORT",
+            "id": "$UUID", "aid": "0", "net": "tcp", "type": "none", "host": "", "path": "", "tls": "none"
+          }
+          EOF
+          )
+          echo "vmess://$(echo -n $VMESS_JSON | base64 -w 0)"
+          echo ""
+          echo "=========================================================="
+          echo "⏱ Valid for: 6 Hours"
+          echo "=========================================================="
+
+      - name: Keep Runner Alive
+        run: |
+          echo "Proxies are live. Copy the links above and enjoy!"
+          sleep 21600 # 6 hours
