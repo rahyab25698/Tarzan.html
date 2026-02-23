@@ -1,1 +1,61 @@
-fdfd
+name: IR_SSH_Shahan_Style_2026
+on:
+  workflow_dispatch: # اجرای دستی
+
+jobs:
+  deploy_ssh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # اجرا تا 6 ساعت [6]
+    
+    steps:
+      - name: Setup SSH Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssh-server sshpass 
+          # ایجاد کاربر مشابه پنل شاهان
+          sudo useradd -m -s /bin/bash shahan_user
+          echo "shahan_user:pass1234" | sudo chpasswd
+          sudo service ssh start
+
+      - name: Install & Start Ngrok
+        id: tunnel
+        run: |
+          # نصب Ngrok برای ایجاد تونل TCP 
+          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt update && sudo apt install ngrok
+          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          
+          # اجرای تونل روی پورت 22 (SSH) 
+          ngrok tcp 22 --log=stdout > ngrok.log &
+          sleep 10
+          
+          # استخراج آدرس و پورت از لاگ
+          TUNNEL_ADDR=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' | sed 's/tcp:\/\///')
+          echo "addr=$TUNNEL_ADDR" >> $GITHUB_OUTPUT
+
+      - name: Display Connection Info
+        run: |
+          ADDR="${{ steps.tunnel.outputs.addr }}"
+          if [ -z "$ADDR" ] || [ "$ADDR" == "null" ]; then
+            echo "❌ Error: Could not get Ngrok tunnel address. Check your NGROK_AUTH_TOKEN."
+            exit 1
+          fi
+          
+          HOST=$(echo $ADDR | cut -d':' -f1)
+          PORT=$(echo $ADDR | cut -d':' -f2)
+          
+          echo "------------------------------------------"
+          echo "✅ SSH VPN Ready (Shahan Style)"
+          echo "📍 Host: $HOST"
+          echo "🔢 Port: $PORT"
+          echo "👤 User: shahan_user"
+          echo "🔑 Pass: pass1234"
+          echo "------------------------------------------"
+          echo "SSH Command: ssh shahan_user@$HOST -p $PORT"
+          echo "------------------------------------------"
+
+      - name: Keep Runner Alive
+        run: |
+          echo "SSH Server is live via Ngrok. Waiting for connections..."
+          sleep 21600 # نگه داشتن رانر برای 6 ساعت [6]
